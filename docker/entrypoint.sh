@@ -5,7 +5,6 @@ MTU="${MTU:-8500}"
 IPV4="${IPV4:-198.18.0.1}"
 IPV6="${IPV6:-}"
 
-TABLE="${TABLE:-20}"
 MARK="${MARK:-438}"
 
 SOCKS5_ADDR="${SOCKS5_ADDR:-172.17.0.1}"
@@ -13,10 +12,7 @@ SOCKS5_PORT="${SOCKS5_PORT:-1080}"
 SOCKS5_USERNAME="${SOCKS5_USERNAME:-}"
 SOCKS5_PASSWORD="${SOCKS5_PASSWORD:-}"
 SOCKS5_UDP_MODE="${SOCKS5_UDP_MODE:-udp}"
-
-IPV4_INCLUDED_ROUTES="${IPV4_INCLUDED_ROUTES:-0.0.0.0/0}"
-IPV4_EXCLUDED_ROUTES="${IPV4_EXCLUDED_ROUTES:-}"
-
+LOCAL_ROUTE="${LOCAL_ROUTE:-}"
 LOG_LEVEL="${LOG_LEVEL:-warn}"
 
 config_file() {
@@ -49,19 +45,10 @@ config_route() {
   echo "#!/bin/sh" > /route.sh
   chmod +x /route.sh
 
-  echo "ip route add default dev ${TUN} table ${TABLE}" >> /route.sh
-
-  for addr in $(echo ${IPV4_INCLUDED_ROUTES} | tr ',' '\n'); do
-    echo "ip rule add to ${addr} table ${TABLE}" >> /route.sh
-  done
-
-  echo "ip rule add to $(ip -o -f inet address show eth0 | awk '/scope global/ {print $4}') table main" >> /route.sh
-
-  for addr in $(echo ${IPV4_EXCLUDED_ROUTES} | tr ',' '\n'); do
-    echo "ip rule add to ${addr} table main" >> /route.sh
-  done
-
-  echo "ip rule add fwmark ${MARK} table main pref 1" >> /route.sh
+  echo "ip route del default" >> /route.sh
+  echo "ip route add default via ${IPV4} dev ${TUN} metric 1" >> /route.sh
+  #echo "ip route add default via $(ip -o -f inet address show eth0 | awk '/scope global/ {print $4}' | cut -d/ -f1) dev eth0 metric 10" >> /route.sh
+  echo "${LOCAL_ROUTE}" >> /route.sh
 }
 
 run() {
