@@ -8,7 +8,7 @@ IPV6="${IPV6:-}"
 CONFIG_ROUTES="${CONFIG_ROUTES:-1}"
 
 TABLE="${TABLE:-20}"
-if [ "${CONFIG_ROUTES}" == "0" ]; then
+if [ "${CONFIG_ROUTES}" = "0" ]; then
   MARK="${MARK:-0}"
 else
   MARK="${MARK:-438}"
@@ -25,6 +25,10 @@ IPV4_INCLUDED_ROUTES="${IPV4_INCLUDED_ROUTES:-0.0.0.0/0}"
 IPV4_EXCLUDED_ROUTES="${IPV4_EXCLUDED_ROUTES:-}"
 
 LOG_LEVEL="${LOG_LEVEL:-warn}"
+
+LOCAL_ROUTE="${LOCAL_ROUTE:-}"
+
+trap '' SIGTERM SIGINT
 
 config_file() {
   cat > /hs5t.yml << EOF
@@ -60,30 +64,50 @@ config_route() {
   echo "#!/bin/sh" > /route.sh
   chmod +x /route.sh
 
-  if [ "${CONFIG_ROUTES}" == "0" ]; then
+  if [ "${CONFIG_ROUTES}" = "0" ]; then
+    echo "config routes 0"
     return
   fi
 
-  echo "ip route add default dev ${TUN} table ${TABLE}" >> /route.sh
-
-  for addr in $(echo ${IPV4_INCLUDED_ROUTES} | tr ',' '\n'); do
-    echo "ip rule add to ${addr} table ${TABLE}" >> /route.sh
-  done
-
-  echo "ip rule add to $(ip -o -f inet address show eth0 | awk '/scope global/ {print $4}') table main" >> /route.sh
-
-  for addr in $(echo ${IPV4_EXCLUDED_ROUTES} | tr ',' '\n'); do
-    echo "ip rule add to ${addr} table main" >> /route.sh
-  done
-
-  echo "ip rule add fwmark ${MARK} table main pref 1" >> /route.sh
+  echo "ip route del default" >> /route.sh
+  echo "ip route add default via ${IPV4} dev ${TUN} metric 1" >> /route.sh
+  if [ -n "$LOCAL_ROUTE" ]; then
+    echo "$LOCAL_ROUTE" >> /route.sh
+  fi
 }
 
+NUM_CORES=$(nproc)
+if [ "$NUM_CORES" -gt 2 ]; then
+  # because core 0 is overloaded by other processes, and this is single process app, let's try use less busy core
+  VPN_CORE=1
+else
+  VPN_CORE=0
+fi
+
 run() {
+  echo "selected VPN core: $VPN_CORE"
   config_file
   config_route
   echo "echo 1 > /success" >> /route.sh
-  hev-socks5-tunnel /hs5t.yml
+
+  echo "[DEBUG] IP addresses:"
+  ip addr show
+
+  echo "[DEBUG] Routes:"
+  ip route show
+
+  echo "[DEBUG] Rules (ip rule):"
+  ip rule show
+
+  echo "[DEBUG] Interfaces:"
+  ip link show
+
+  echo "$(cat /route.sh)"
+
+  taskset -c "$VPN_CORE" hev-socks5-tunnel /hs5t.yml &
+  TUNNEL_PID=$!
+  trap "echo 'Stopping...'; kill -TERM $TUNNEL_PID 2>/dev/null; wait $TUNNEL_PID 2>/dev/null; exit 0" SIGTERM SIGINT
+  wait $TUNNEL_PID
 }
 
 run || exit 1
